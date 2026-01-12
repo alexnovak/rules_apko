@@ -34,6 +34,21 @@ def _apko_extension_impl(module_ctx):
     root_direct_deps = []
     root_direct_dev_deps = []
     registrations = {}
+
+    # Deduplication dictionaries keyed by URL
+    all_keyrings = {}  # url -> keyring dict
+    all_repositories = {}  # url -> repository dict
+    all_packages = {}  # url -> package dict
+
+    # Track which URLs each lock needs (for creating mappings)
+    lock_keyrings = {}  # lock_name -> [urls]
+    lock_repositories = {}  # lock_name -> [urls]
+    lock_packages = {}  # lock_name -> [urls]
+
+    # Also track lock metadata for Pass 3
+    lock_metadata = {}  # lock_name -> {mod, lock, is_dev}
+
+    # Pass 1: Collect all resources from all locks, deduplicating by URL
     for mod in module_ctx.modules:
         for lock in mod.tags.translate_lock:
             lock_file = util.parse_lock(module_ctx.read(lock.lock))
@@ -41,41 +56,84 @@ def _apko_extension_impl(module_ctx):
             if not "contents" in lock_file:
                 continue
 
+            lock_keyrings[lock.name] = []
+            lock_repositories[lock.name] = []
+            lock_packages[lock.name] = []
+            lock_metadata[lock.name] = {
+                "mod": mod,
+                "lock": lock,
+                "is_dev": module_ctx.is_dev_dependency(lock),
+            }
+
+            # Collect keyrings (deduplicate by URL)
             if "keyring" in lock_file["contents"]:
                 for keyring in lock_file["contents"]["keyring"]:
-                    apk_keyring(
-                        name = util.sanitize_string("{}_{}".format(lock.name, keyring["name"])),
-                        url = keyring["url"],
-                    )
+                    all_keyrings[keyring["url"]] = keyring
+                    lock_keyrings[lock.name].append(keyring["url"])
 
+            # Collect repositories (deduplicate by URL)
             for repository in lock_file["contents"]["repositories"]:
-                apk_repository(
-                    name = util.sanitize_string("{}_{}_{}".format(lock.name, repository["name"], repository["architecture"])),
-                    url = repository["url"],
-                    architecture = repository["architecture"],
-                )
+                all_repositories[repository["url"]] = repository
+                lock_repositories[lock.name].append(repository["url"])
 
+            # Collect packages (deduplicate by URL)
             for package in lock_file["contents"]["packages"]:
-                apk_import(
-                    name = util.sanitize_string("{}_{}_{}_{}".format(lock.name, package["name"], package["architecture"], package["version"])),
-                    package_name = package["name"],
-                    version = package["version"],
-                    architecture = package["architecture"],
-                    url = package["url"],
-                    signature_range = package["signature"]["range"],
-                    signature_checksum = package["signature"]["checksum"],
-                    control_range = package["control"]["range"],
-                    control_checksum = package["control"]["checksum"],
-                    data_range = package["data"]["range"],
-                    data_checksum = package["data"]["checksum"],
-                )
+                all_packages[package["url"]] = package
+                lock_packages[lock.name].append(package["url"])
 
-            translate_apko_lock(name = lock.name, target_name = lock.name, lock = lock.lock)
+    # Pass 2: Create shared repository rules (one per unique URL)
+    for url, keyring in all_keyrings.items():
+        apk_keyring(
+            name = util.apk_keyring_repo_name(keyring),
+            url = keyring["url"],
+        )
 
-            if mod.is_root:
-                deps = root_direct_dev_deps if module_ctx.is_dev_dependency(lock) else root_direct_deps
-                deps.append(lock.name)
+    for url, repository in all_repositories.items():
+        apk_repository(
+            name = util.apk_index_repo_name(repository),
+            url = repository["url"],
+            architecture = repository["architecture"],
+        )
 
+    for url, package in all_packages.items():
+        apk_import(
+            name = util.apk_repo_name(package),
+            package_name = package["name"],
+            version = package["version"],
+            architecture = package["architecture"],
+            url = package["url"],
+            signature_range = package["signature"]["range"],
+            signature_checksum = package["signature"]["checksum"],
+            control_range = package["control"]["range"],
+            control_checksum = package["control"]["checksum"],
+            data_range = package["data"]["range"],
+            data_checksum = package["data"]["checksum"],
+        )
+
+    # Pass 3: Create lock-specific translate_apko_lock repos with URL -> repo name mappings
+    for lock_name, metadata in lock_metadata.items():
+        lock = metadata["lock"]
+        mod = metadata["mod"]
+
+        # Build URL -> shared repo name mappings for this lock
+        package_repos = {url: util.apk_repo_name(all_packages[url]) for url in lock_packages[lock_name]}
+        index_repos = {url: util.apk_index_repo_name(all_repositories[url]) for url in lock_repositories[lock_name]}
+        keyring_repos = {url: util.apk_keyring_repo_name(all_keyrings[url]) for url in lock_keyrings[lock_name]}
+
+        translate_apko_lock(
+            name = lock.name,
+            target_name = lock.name,
+            lock = lock.lock,
+            package_repos = json.encode(package_repos),
+            index_repos = json.encode(index_repos),
+            keyring_repos = json.encode(keyring_repos),
+        )
+
+        if mod.is_root:
+            deps = root_direct_dev_deps if metadata["is_dev"] else root_direct_deps
+            deps.append(lock.name)
+
+    for mod in module_ctx.modules:
         for toolchain in mod.tags.toolchain:
             if toolchain.name != _DEFAULT_NAME and not mod.is_root:
                 fail("""\

@@ -102,6 +102,47 @@ def _normalize_sri(rctx, checksum):
     return r.stdout
 
 # TODO: this shouldn't be necessary in the first place. change apko so that it except to find the original apk in the cache
+def _apk_repo_name(package):
+    """Generate a shared repository name for an APK package.
+
+    Args:
+        package: dict with "name", "architecture", "version", and "url" keys
+    Returns:
+        A sanitized string suitable for use as a Bazel repository name
+    """
+    url_hash = abs(hash(package["url"]))
+    return _sanitize_string("apk_{}_{}_{}_{}".format(
+        package["name"],
+        package["architecture"],
+        package["version"],
+        url_hash,
+    ))
+
+def _apk_index_repo_name(repository):
+    """Generate a shared repository name for an APKINDEX.
+
+    Args:
+        repository: dict with "architecture" and "url" keys
+    Returns:
+        A sanitized string suitable for use as a Bazel repository name
+    """
+    url_hash = abs(hash(repository["url"]))
+    return _sanitize_string("apk_index_{}_{}".format(
+        repository["architecture"],
+        url_hash,
+    ))
+
+def _apk_keyring_repo_name(keyring):
+    """Generate a shared repository name for a keyring.
+
+    Args:
+        keyring: dict with "url" key
+    Returns:
+        A sanitized string suitable for use as a Bazel repository name
+    """
+    url_hash = abs(hash(keyring["url"]))
+    return _sanitize_string("apk_keyring_{}".format(url_hash))
+
 def _concatenate_gzip_segments(rctx, output, signature, control, data):
     """concatenates gzip segments into one gzip file in signature, control, data order
 
@@ -121,6 +162,9 @@ def _concatenate_gzip_segments(rctx, output, signature, control, data):
         fail("""concatenate_gzip_segments failed.\nstderr: {}\nstdout: {}""".format(r.stdout, r.stderr))
 
 util = struct(
+    apk_index_repo_name = _apk_index_repo_name,
+    apk_keyring_repo_name = _apk_keyring_repo_name,
+    apk_repo_name = _apk_repo_name,
     concatenate_gzip_segments = _concatenate_gzip_segments,
     normalize_sri = _normalize_sri,
     parse_lock = _parse_lock,

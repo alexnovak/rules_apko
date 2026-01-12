@@ -75,9 +75,18 @@ def _translate_apko_lock_impl(rctx):
 
     target_name = rctx.attr.target_name if rctx.attr.target_name else rctx.name
 
+    # Parse URL -> repo name mappings if provided (for deduplication across lock files)
+    package_repos = json.decode(rctx.attr.package_repos) if rctx.attr.package_repos else {}
+    index_repos = json.decode(rctx.attr.index_repos) if rctx.attr.index_repos else {}
+    keyring_repos = json.decode(rctx.attr.keyring_repos) if rctx.attr.keyring_repos else {}
+
     if "keyring" in lock_file["contents"]:
         for keyring in lock_file["contents"]["keyring"]:
-            name = util.sanitize_string("{}_{}".format(target_name, keyring["name"]))
+            # Use shared repo name from mapping, or fall back to lock-prefixed name
+            if keyring["url"] in keyring_repos:
+                name = keyring_repos[keyring["url"]]
+            else:
+                name = util.sanitize_string("{}_{}".format(target_name, keyring["name"]))
             keyrings.append("@{}//:keyring".format(name))
             defs.append(APK_KEYRING_TMPL.format(
                 name = name,
@@ -85,7 +94,11 @@ def _translate_apko_lock_impl(rctx):
             ))
 
     for package in lock_file["contents"]["packages"]:
-        name = util.sanitize_string("{}_{}_{}_{}".format(target_name, package["name"], package["architecture"], package["version"]))
+        # Use shared repo name from mapping, or fall back to lock-prefixed name
+        if package["url"] in package_repos:
+            name = package_repos[package["url"]]
+        else:
+            name = util.sanitize_string("{}_{}_{}_{}".format(target_name, package["name"], package["architecture"], package["version"]))
         apks.append("@{}//:all".format(name))
 
         defs.append(APK_IMPORT_TMPL.format(
@@ -103,7 +116,11 @@ def _translate_apko_lock_impl(rctx):
         ))
 
     for repository in lock_file["contents"]["repositories"]:
-        name = util.sanitize_string("{}_{}_{}".format(target_name, repository["name"], repository["architecture"]))
+        # Use shared repo name from mapping, or fall back to lock-prefixed name
+        if repository["url"] in index_repos:
+            name = index_repos[repository["url"]]
+        else:
+            name = util.sanitize_string("{}_{}_{}".format(target_name, repository["name"], repository["architecture"]))
         indexes.append("@{}//:index".format(name))
         defs.append(APK_REPOSITORY_TMPL.format(
             name = name,
@@ -126,6 +143,10 @@ translate_apko_lock = repository_rule(
     attrs = {
         "lock": attr.label(doc = "label to the `apko.lock.json` file.", mandatory = True),
         "target_name": attr.string(doc = "internal. do not use!"),
+        # Attributes for deduplication across lock files (passed by module extension)
+        "package_repos": attr.string(doc = "internal. JSON-encoded mapping of package URL to shared repo name.", default = ""),
+        "index_repos": attr.string(doc = "internal. JSON-encoded mapping of index URL to shared repo name.", default = ""),
+        "keyring_repos": attr.string(doc = "internal. JSON-encoded mapping of keyring URL to shared repo name.", default = ""),
     },
     doc = _DOC,
 )
