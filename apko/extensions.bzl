@@ -62,15 +62,13 @@ def _apko_extension_impl(module_ctx):
                     version = package["version"],
                     architecture = package["architecture"],
                     url = package["url"],
-                    signature_range = package["signature"]["range"],
-                    signature_checksum = package["signature"]["checksum"],
-                    control_range = package["control"]["range"],
-                    control_checksum = package["control"]["checksum"],
-                    data_range = package["data"]["range"],
-                    data_checksum = package["data"]["checksum"],
                 )
 
-            translate_apko_lock(name = lock.name, target_name = lock.name, lock = lock.lock)
+            translate_apko_lock(
+                name = lock.name,
+                target_name = lock.name,
+                lock = lock.lock,
+            )
 
             if mod.is_root:
                 deps = root_direct_dev_deps if module_ctx.is_dev_dependency(lock) else root_direct_deps

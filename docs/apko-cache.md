@@ -1,8 +1,18 @@
-# Fetching and Caching Contents
+# Fetching APK Contents
 
-To ensure efficient operation, the `apko_image` rule must maintain a cache of remote contents that it fetches from repositories. While outside of Bazel, `apko` manages its own cache, under Bazel, the cache must be maintained by Bazel to ensure correctness and speed. Therefore, Bazel needs to know what needs to be fetched and from where to cache these HTTP requests and provide them to `apko` as required.
+The `apko_image` rule fetches APK packages and repository indexes from remote sources and provides them to `apko` for building container images. Bazel manages these downloads to ensure correctness and caching.
 
-The `apko.lock.json` file contains all the necessary information about how to perform the HTTP fetches required by `apko` to build the container image.
+The `apko.lock.json` file contains all the necessary information about which packages to fetch and from where.
+
+## How It Works
+
+1. **Lock file** (`apko.lock.json`) defines the exact packages, versions, and repository URLs
+2. **`translate_lock`** converts the lock file into Bazel repository rules that download the packages
+3. **`apko_image`** sets up a local repository structure and invokes `apko build` with:
+   - `--build-repository-append` pointing to the local repository (packages available for build, but paths not written to `/etc/apk/repositories`)
+   - `--keyring-append` for signing keys
+   - `--lockfile` for reproducible builds
+   - `--offline` mode since all content is pre-fetched
 
 ## Generating the Lock File
 
@@ -10,21 +20,20 @@ The `apko.lock.json` file contains all the necessary information about how to pe
 
 ## Using `translate_lock`
 
-Having just the `apko/lock.json` file alone is insufficient; all the information needs to be converted into `apk_<content_type>` repository calls to make them accessible to Bazel. The `translate_lock` tool accomplishes this by taking the `apko.lock.json` file and dynamically generating the required Bazel repositories.
+The `translate_lock` tool takes the `apko.lock.json` file and generates Bazel repositories for all the APK packages, indexes, and keyrings.
 
-`translate_lock` will create a new bazel repository named after itself. this repository will also have a target named contents, which you can pass to apko_image:
+`translate_lock` creates a repository with a target named `contents` that you pass to `apko_image`:
 
 ```starlark
 apko_image(
     name = "lock",
     config = "apko.yaml",
-    # name of the repository is the same translate_lock!
     contents = "@examples_lock//:contents",
     tag = "lock:latest",
 )
 ```
 
-#### Usage with `bzlmod`
+### Usage with bzlmod
 
 ```starlark
 apk = use_extension("@rules_apko//apko:extensions.bzl", "apko")
@@ -36,7 +45,7 @@ apk.translate_lock(
 use_repo(apk, "examples_lock")
 ```
 
-#### Usage with Workspace
+### Usage with Workspace
 
 ```starlark
 load("@rules_apko//apko:translate_lock.bzl", "translate_apko_lock")

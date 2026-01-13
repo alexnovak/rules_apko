@@ -84,45 +84,7 @@ def _sanitize_string(string):
 def _parse_lock(content):
     return json.decode(content)
 
-def _normalize_sri(rctx, checksum):
-    """Converts SRI string to a plain checksum hex.
-
-    Args:
-        rctx: repository_ctx
-        checksum: SRI string
-    Returns:
-        normalized checksum hex
-    """
-    checksum = checksum.split("-", 1)[1]
-    p = rctx.path("sri.sh")
-    rctx.file(p, """echo "$1" | base64 -d | xxd -p -c 10000000 | tr -d '\\n'""", executable = True)
-    r = rctx.execute([p, checksum])
-    if r.return_code != 0:
-        fail("""normalize_sri failed.\nstderr: {}\nstdout: {}""".format(r.stdout, r.stderr))
-    return r.stdout
-
-# TODO: this shouldn't be necessary in the first place. change apko so that it except to find the original apk in the cache
-def _concatenate_gzip_segments(rctx, output, signature, control, data):
-    """concatenates gzip segments into one gzip file in signature, control, data order
-
-    Args:
-        rctx: repository_ctx
-        output: final output path
-        signature: path to the signature segment
-        control: path to the control segment
-        data: path to the data segment
-    Returns:
-        None
-    """
-    p = rctx.path("gzip_seg.sh")
-    rctx.file(p, """cat $2 $3 $4 > $1""", executable = True)
-    r = rctx.execute([p, output, signature, control, data])
-    if r.return_code != 0:
-        fail("""concatenate_gzip_segments failed.\nstderr: {}\nstdout: {}""".format(r.stdout, r.stderr))
-
 util = struct(
-    concatenate_gzip_segments = _concatenate_gzip_segments,
-    normalize_sri = _normalize_sri,
     parse_lock = _parse_lock,
     sanitize_string = _sanitize_string,
     repo_url = _repo_url,
